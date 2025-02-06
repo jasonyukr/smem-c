@@ -247,9 +247,19 @@ int main(int argc, char **argv) {
     if (pidlist == NULL) {
         return 1;
     }
-    int count = pids(pidlist);
+
+    int count;
+    if (argc == 2) {
+        pidlist[0] = atoi(argv[1]);
+        count = 1;
+    } else {
+        count = pids(pidlist);
+    }
+
     if (count > 0) {
-        printf("  PID User     Command                         Swap      USS      PSS      RSS \n");
+        if (argc == 1) {
+            printf("  PID User     Command                         Swap      USS      PSS      RSS \n");
+        }
         for (int i = 0; i < count; i++) {
             show_stat(pidlist[i]);
         }
