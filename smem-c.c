@@ -51,7 +51,7 @@ const char* username(int uid) {
     if (pwd) {
         return pwd->pw_name;
     } else {
-        return NULL;
+        return "";
     }
 }
 
@@ -217,22 +217,33 @@ Stat *parse_smaps_file(int pid) {
     return &stat;
 }
 
-int show_stat(int pid) {
+int last_uid;
+const char *last_username;
+
+void show_stat(int pid) {
     Stat *stat = parse_smaps_file(pid);
 
     const char *uname = "";
     int uid = piduid(pid);
     if (uid != -1) {
-        uname = username(uid);
+        if (last_uid == uid) {
+            uname = last_username;
+        } else {
+            uname = username(uid);
+            last_uid = uid;
+            last_username = uname;
+        }
     }
     if (stat) {
         printf("%5d %-8s %-27s %8d %8d %8d %8d \n",
                 pid, uname, pidcmd(pid), stat->swap, stat->private_dirty + stat->private_clean, stat->pss, stat->rss);
     }
-    return 0;
 }
 
 int main(int argc, char **argv) {
+    last_uid = -1;
+    last_username = "";
+
     int *pidlist = (int *) malloc(sizeof(int) * MAX_PID_ITEMS);
     if (pidlist == NULL) {
         return 1;
