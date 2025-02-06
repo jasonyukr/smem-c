@@ -7,9 +7,23 @@
 #include <limits.h>
 
 #define MAX_PID_ITEMS (4096)
-#define MAX_BUFFER    (4096)
+#define MAX_CMDLINE   (28)
+#define MAX_BUFFER    (1024)
 
-int is_all_digit(const char *str) {
+typedef struct {
+    int size;
+    int rss;
+    int pss;
+    int shared_clean;
+    int shared_dirty;
+    int private_clean;
+    int count;
+    int private_dirty;
+    int referenced;
+    int swap;
+} Stat;
+
+int is_digit(const char *str) {
     while (*str) {
         if (!isdigit((unsigned char) *str)) {
             return 0;
@@ -21,17 +35,16 @@ int is_all_digit(const char *str) {
 
 char *pidcmd(int pid) {
     FILE *file;
-    char path[256];
+    char path[PATH_MAX];
     char *cmdline = NULL;
-    size_t size = 0;
-    static char buff[MAX_BUFFER];
+    static char buff[MAX_CMDLINE];
 
     int c;
     int idx = 0;
     snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
     file = fopen(path, "r");
     if (file) {
-        while ((c = fgetc(file)) != EOF && idx < (MAX_BUFFER - 1)) {
+        while ((c = fgetc(file)) != EOF && idx < (MAX_CMDLINE - 1)) {
             if (c == 0x00)
                 c = ' ';
             buff[idx++] = c;
@@ -45,11 +58,20 @@ char *pidcmd(int pid) {
 }
 
 int is_kernel(int pid) {
-    char *cmdline = pidcmd(pid);
-    if (cmdline) {
-        if (strlen(cmdline) > 0) {
+    FILE *file;
+    char path[PATH_MAX];
+    char *cmdline = NULL;
+
+    int c;
+    int idx = 0;
+    snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
+    file = fopen(path, "r");
+    if (file) {
+        if (fgetc(file) != EOF) {
+            fclose(file);
             return 0;
         } else {
+            fclose(file);
             return 1;
         }
     } else {
@@ -68,7 +90,7 @@ int pids(int *pidlist) {
 
     int count = 0;
     while ((entry = readdir(dp)) != NULL && count < MAX_PID_ITEMS) {
-        if (entry->d_type == DT_DIR && is_all_digit(entry->d_name)) {
+        if (entry->d_type == DT_DIR && is_digit(entry->d_name)) {
             int pid = atoi(entry->d_name);
             if (!is_kernel(pid)) {
                 pidlist[count++] = pid;
@@ -80,14 +102,119 @@ int pids(int *pidlist) {
     return count;
 }
 
+int parse_line(char *line, char *key) {
+    int key_len = strlen(key);
+    if (strncmp(line, key, key_len) == 0) {
+        // Find the position of " kB" and replace it with '\0'
+        char *kb_pos = strstr(line, " kB");
+        if (kb_pos != NULL) {
+            *kb_pos = '\0';
+        }
+        // Parse the size value
+        return atoi(line + key_len);
+    } else {
+        return -1;
+    }
+}
+
+Stat *parse_smaps_file(int pid) {
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "/proc/%d/smaps", pid);
+
+    FILE *file = fopen(path, "r");
+    if (file == NULL) {
+        return NULL;
+    }
+
+    static Stat stat;
+    stat.size = 0;
+    stat.rss = 0;
+    stat.pss = 0;
+    stat.shared_clean = 0;
+    stat.shared_dirty = 0;
+    stat.private_clean = 0;
+    stat.count = 0;
+    stat.private_dirty = 0;
+    stat.referenced = 0;
+    stat.swap = 0;
+
+    char line[MAX_BUFFER];
+    while (fgets(line, sizeof(line), file)) {
+        int size = parse_line(line, "Size:");
+        if (size != -1) {
+            stat.size += size;
+            continue;
+        }
+        size = parse_line(line, "Rss:");
+        if (size != -1) {
+            stat.rss += size;
+            continue;
+        }
+        size = parse_line(line, "Pss:");
+        if (size != -1) {
+            stat.pss += size;
+            continue;
+        }
+        size = parse_line(line, "Shared_Clean:");
+        if (size != -1) {
+            stat.shared_clean += size;
+            continue;
+        }
+        size = parse_line(line, "Shared_Dirty:");
+        if (size != -1) {
+            stat.shared_dirty += size;
+            continue;
+        }
+        size = parse_line(line, "Private_Clean:");
+        if (size != -1) {
+            stat.private_clean += size;
+            continue;
+        }
+        size = parse_line(line, "Count:");
+        if (size != -1) {
+            stat.count += size;
+            continue;
+        }
+        size = parse_line(line, "Private_Dirty:");
+        if (size != -1) {
+            stat.private_dirty += size;
+            continue;
+        }
+        size = parse_line(line, "Referenced:");
+        if (size != -1) {
+            stat.referenced += size;
+            continue;
+        }
+        size = parse_line(line, "Swap:");
+        if (size != -1) {
+            stat.swap += size;
+            continue;
+        }
+    }
+    fclose(file);
+    return &stat;
+}
+
+int show_stat(int pid) {
+    Stat *stat = parse_smaps_file(pid);
+    if (stat) {
+        printf("%5d %-8s %-27s %8d %8d %8d %8d \n",
+                pid, "user", pidcmd(pid), stat->swap, stat->private_dirty + stat->private_clean, stat->pss, stat->rss);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     int *pidlist = (int *) malloc(sizeof(int) * MAX_PID_ITEMS);
     if (pidlist == NULL) {
         return 1;
     }
     int count = pids(pidlist);
-    for (int i = 0; i < count; i++) {
-        printf("[%d] %d\n", i, pidlist[i]);
+    if (count > 0) {
+        printf("  PID User     Command                         Swap      USS      PSS      RSS \n");
+        for (int i = 0; i < count; i++) {
+            show_stat(pidlist[i]);
+        }
     }
     free(pidlist);
     return 0;
