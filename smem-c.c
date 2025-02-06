@@ -222,19 +222,18 @@ const char *last_username;
 
 void show_stat(int pid) {
     Stat *stat = parse_smaps_file(pid);
-
-    const char *uname = "";
-    int uid = piduid(pid);
-    if (uid != -1) {
-        if (last_uid == uid) {
-            uname = last_username;
-        } else {
-            uname = username(uid);
-            last_uid = uid;
-            last_username = uname;
-        }
-    }
     if (stat) {
+        const char *uname = "";
+        int uid = piduid(pid);
+        if (uid != -1) {
+            if (last_uid == uid) {
+                uname = last_username;
+            } else {
+                uname = username(uid);
+                last_uid = uid;
+                last_username = uname;
+            }
+        }
         printf("%5d %-8s %-27s %8d %8d %8d %8d \n",
                 pid, uname, pidcmd(pid), stat->swap, stat->private_dirty + stat->private_clean, stat->pss, stat->rss);
     }
