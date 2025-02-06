@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include <sys/stat.h>
 #include <limits.h>
+#include <pwd.h>
+#include <unistd.h>
 
 #define MAX_PID_ITEMS (4096)
 #define MAX_CMDLINE   (28)
@@ -31,6 +33,26 @@ int is_digit(const char *str) {
         str++;
     }
     return 1;
+}
+
+int piduid(int pid) {
+    struct stat statbuf;
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "/proc/%d", pid);
+
+    if (stat(path, &statbuf) != 0) {
+        return -1;
+    }
+    return statbuf.st_uid;
+}
+
+const char* username(int uid) {
+    struct passwd *pwd = getpwuid(uid);
+    if (pwd) {
+        return pwd->pw_name;
+    } else {
+        return NULL;
+    }
 }
 
 char *pidcmd(int pid) {
@@ -118,14 +140,6 @@ int parse_line(char *line, char *key) {
 }
 
 Stat *parse_smaps_file(int pid) {
-    char path[PATH_MAX];
-    snprintf(path, sizeof(path), "/proc/%d/smaps", pid);
-
-    FILE *file = fopen(path, "r");
-    if (file == NULL) {
-        return NULL;
-    }
-
     static Stat stat;
     stat.size = 0;
     stat.rss = 0;
@@ -137,6 +151,14 @@ Stat *parse_smaps_file(int pid) {
     stat.private_dirty = 0;
     stat.referenced = 0;
     stat.swap = 0;
+
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "/proc/%d/smaps", pid);
+
+    FILE *file = fopen(path, "r");
+    if (file == NULL) {
+        return NULL;
+    }
 
     char line[MAX_BUFFER];
     while (fgets(line, sizeof(line), file)) {
@@ -197,9 +219,15 @@ Stat *parse_smaps_file(int pid) {
 
 int show_stat(int pid) {
     Stat *stat = parse_smaps_file(pid);
+
+    const char *uname = "";
+    int uid = piduid(pid);
+    if (uid != -1) {
+        uname = username(uid);
+    }
     if (stat) {
         printf("%5d %-8s %-27s %8d %8d %8d %8d \n",
-                pid, "user", pidcmd(pid), stat->swap, stat->private_dirty + stat->private_clean, stat->pss, stat->rss);
+                pid, uname, pidcmd(pid), stat->swap, stat->private_dirty + stat->private_clean, stat->pss, stat->rss);
     }
     return 0;
 }
